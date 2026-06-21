@@ -53,6 +53,41 @@ export function parseGpsCsv(csvText: string): GpsPoint[] {
   const result = Papa.parse(csvText, { header: true, skipEmptyLines: true })
   if (!result.data || result.data.length === 0) return []
 
+  const VALID_LOCATION_TYPES: LocationType[] = [
+    'loading_area',
+    'service_area',
+    'vaccination_point',
+    'highway',
+    'other',
+  ]
+
+  const parseLocationType = (raw: string | undefined): LocationType | undefined => {
+    if (!raw) return undefined
+    const low = raw.trim().toLowerCase()
+    if (VALID_LOCATION_TYPES.includes(low as LocationType)) {
+      return low as LocationType
+    }
+    const labelMap: Record<string, LocationType> = {
+      '装卸区': 'loading_area',
+      '装车': 'loading_area',
+      '卸货': 'loading_area',
+      'loading': 'loading_area',
+      '服务区': 'service_area',
+      'service': 'service_area',
+      '接种点': 'vaccination_point',
+      '疾控': 'vaccination_point',
+      'vaccination': 'vaccination_point',
+      '高速': 'highway',
+      'highway': 'highway',
+      '其他': 'other',
+      'other': 'other',
+    }
+    for (const k of Object.keys(labelMap)) {
+      if (low.includes(k)) return labelMap[k]
+    }
+    return undefined
+  }
+
   return result.data
     .map((row: Record<string, string>) => {
       const timestamp =
@@ -62,8 +97,15 @@ export function parseGpsCsv(csvText: string): GpsPoint[] {
       const speed = parseFloat(row['speed'] || row['速度'] || '0')
       if (!timestamp || isNaN(latitude) || isNaN(longitude)) return null
       const isStopped = (isNaN(speed) ? 0 : speed) < 5
-      const locationName = row['location'] || row['地点'] || row['name'] || undefined
-      const locationType: LocationType | undefined = undefined
+      const locationName = row['location'] || row['地点'] || row['name'] || row['location_name'] || undefined
+      const locationTypeRaw =
+        row['locationType'] ||
+        row['location_type'] ||
+        row['地点类型'] ||
+        row['类型'] ||
+        row['type'] ||
+        undefined
+      const locationType = parseLocationType(locationTypeRaw)
       const result: GpsPoint = {
         timestamp,
         latitude,
@@ -117,77 +159,99 @@ export function generateSegmentsFromTempData(
 ): TemperatureSegment[] {
   if (tempData.length === 0) return []
 
-  const segments: TemperatureSegment[] = []
-  let segStart = 0
-  let wasOverTemp = tempData[0].temperature > tempMax || tempData[0].temperature < tempMin
+  const isOverTemp = (t: number) => t > tempMax || t < tempMin
 
-  for (let i = 1; i < tempData.length; i++) {
-    const isOverTemp = tempData[i].temperature > tempMax || tempData[i].temperature < tempMin
-    if (isOverTemp !== wasOverTemp || i === tempData.length - 1) {
-      const endIdx = i === tempData.length - 1 ? i : i - 1
-      const slice = tempData.slice(segStart, endIdx + 1)
-      const temps = slice.map((p) => p.temperature)
-      const segStartTs = new Date(slice[0].timestamp).getTime()
-      const segEndTs = new Date(slice[slice.length - 1].timestamp).getTime()
-      const segMidTs = (segStartTs + segEndTs) / 2
+  const buildSegment = (
+    startIdx: number,
+    endIdx: number,
+    overTempFlag: boolean
+  ): TemperatureSegment => {
+    const slice = tempData.slice(startIdx, endIdx + 1)
+    const temps = slice.map((p) => p.temperature)
+    const segStartTs = new Date(slice[0].timestamp).getTime()
+    const segEndTs = new Date(slice[slice.length - 1].timestamp).getTime()
+    const segMidTs = (segStartTs + segEndTs) / 2
 
-      let location = '运输途中'
-      let locationType: LocationType = 'highway'
+    let location = '运输途中'
+    let locationType: LocationType = 'highway'
 
-      if (wasOverTemp && stops.length > 0) {
-        let bestStop: StopPoint | null = null
-        let bestDist = Infinity
-        for (const sp of stops) {
-          const spStart = new Date(sp.startTime).getTime()
-          const spEnd = new Date(sp.endTime).getTime()
-          const spMid = (spStart + spEnd) / 2
-          const dist = Math.abs(spMid - segMidTs)
-          const overlapStart = Math.max(segStartTs, spStart)
-          const overlapEnd = Math.min(segEndTs, spEnd)
-          const hasOverlap = overlapEnd > overlapStart
-          if (hasOverlap || dist < bestDist) {
-            if (hasOverlap || dist < (tempData.length > 100 ? 600000 : 1200000)) {
-              bestDist = hasOverlap ? -1 : dist
-              bestStop = sp
-            }
-          }
+    if (overTempFlag && stops.length > 0) {
+      let bestStop: StopPoint | null = null
+      let bestDist = Infinity
+      for (const sp of stops) {
+        const spStart = new Date(sp.startTime).getTime()
+        const spEnd = new Date(sp.endTime).getTime()
+        const spMid = (spStart + spEnd) / 2
+        const dist = Math.abs(spMid - segMidTs)
+        const overlapStart = Math.max(segStartTs, spStart)
+        const overlapEnd = Math.min(segEndTs, spEnd)
+        const hasOverlap = overlapEnd > overlapStart
+        if (hasOverlap) {
+          bestDist = -1
+          bestStop = sp
+          break
         }
-        if (bestStop) {
-          location = bestStop.locationName
-          locationType = bestStop.locationType
-        }
-      } else if (!wasOverTemp && stops.length > 0) {
-        for (const sp of stops) {
-          const spStart = new Date(sp.startTime).getTime()
-          const spEnd = new Date(sp.endTime).getTime()
-          const overlapStart = Math.max(segStartTs, spStart)
-          const overlapEnd = Math.min(segEndTs, spEnd)
-          if (overlapEnd > overlapStart) {
-            location = sp.locationName
-            locationType = sp.locationType
-            break
-          }
+        if (dist < bestDist && dist < (tempData.length > 100 ? 600000 : 1200000)) {
+          bestDist = dist
+          bestStop = sp
         }
       }
+      if (bestStop) {
+        location = bestStop.locationName
+        locationType = bestStop.locationType
+      }
+    } else if (!overTempFlag && stops.length > 0) {
+      for (const sp of stops) {
+        const spStart = new Date(sp.startTime).getTime()
+        const spEnd = new Date(sp.endTime).getTime()
+        const overlapStart = Math.max(segStartTs, spStart)
+        const overlapEnd = Math.min(segEndTs, spEnd)
+        if (overlapEnd > overlapStart) {
+          location = sp.locationName
+          locationType = sp.locationType
+          break
+        }
+      }
+    }
 
-      segments.push({
-        id: `${waybillId}-seg-${segments.length}`,
-        waybillId,
-        startTime: slice[0].timestamp,
-        endTime: slice[slice.length - 1].timestamp,
-        minTemp: Math.min(...temps),
-        maxTemp: Math.max(...temps),
-        avgTemp: Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10,
-        location,
-        locationType,
-        verdict: wasOverTemp ? null : 'acceptable',
-        note: '',
-        isOverTemp: wasOverTemp,
-      })
-      segStart = i
-      wasOverTemp = isOverTemp
+    return {
+      id: `${waybillId}-seg-${segments.length}`,
+      waybillId,
+      startTime: slice[0].timestamp,
+      endTime: slice[slice.length - 1].timestamp,
+      minTemp: Math.min(...temps),
+      maxTemp: Math.max(...temps),
+      avgTemp: Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10,
+      location,
+      locationType,
+      verdict: overTempFlag ? null : 'acceptable',
+      note: '',
+      isOverTemp: overTempFlag,
     }
   }
+
+  const segments: TemperatureSegment[] = []
+  let segStart = 0
+  let currentOverTemp = isOverTemp(tempData[0].temperature)
+
+  for (let i = 1; i < tempData.length; i++) {
+    const thisOverTemp = isOverTemp(tempData[i].temperature)
+
+    if (thisOverTemp !== currentOverTemp) {
+      segments.push(buildSegment(segStart, i - 1, currentOverTemp))
+      segStart = i
+      currentOverTemp = thisOverTemp
+    }
+
+    if (i === tempData.length - 1) {
+      segments.push(buildSegment(segStart, i, currentOverTemp))
+    }
+  }
+
+  if (tempData.length === 1) {
+    segments.push(buildSegment(0, 0, currentOverTemp))
+  }
+
   return segments
 }
 

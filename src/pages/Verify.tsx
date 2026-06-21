@@ -644,7 +644,9 @@ export default function Verify() {
   }, [waybillId, waybill, tempData, stopPointsList, allSegments.length, setSegments])
   const overTempSegments = allSegments.filter((s) => s.isOverTemp)
   const evaluatedCount = overTempSegments.filter((s) => s.verdict !== null).length
-  const allEvaluated = overTempSegments.length > 0 && evaluatedCount === overTempSegments.length
+  const allEvaluated =
+    allSegments.length > 0 &&
+    (overTempSegments.length === 0 || evaluatedCount === overTempSegments.length)
 
   const handleVerdictChange = useCallback(
     (segmentId: string, verdict: Verdict, note?: string) => {
@@ -822,6 +824,15 @@ export default function Verify() {
                       <Clock size={10} className="text-slate-600" />
                       <span className="text-[11px] text-slate-500 font-mono">
                         {formatTime(seg.startTime)} - {formatTime(seg.endTime)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <MapPin size={10} className="text-slate-600" />
+                      <span className="text-[11px] text-slate-500 truncate">
+                        {seg.location}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-frost-900/40 text-frost-400 border border-frost-800/30">
+                        {LOCATION_TYPE_LABELS[seg.locationType]}
                       </span>
                     </div>
                     <div className="text-[11px] text-red-400/80 font-mono mt-0.5">

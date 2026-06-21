@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "description": "冷链运输稽核桌面客户端",
-  "main": "electron/main.js",
+  "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite",

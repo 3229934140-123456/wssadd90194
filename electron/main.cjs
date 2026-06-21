@@ -12,6 +12,7 @@ function createWindow() {
     title: '冷链稽核',
     icon: path.join(__dirname, '..', 'public', 'favicon.svg'),
     webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
     },

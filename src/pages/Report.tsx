@@ -58,7 +58,7 @@ export default function Report() {
     existingReport?.responsibleReply ?? ''
   )
   const [releaseRecommendation, setReleaseRecommendation] = useState(
-    existingReport?.releaseRecommendation ?? ''
+    existingReport?.releaseRecommendation ?? (overTempSegments.length === 0 ? 'full_release' : '')
   )
   const [auditorName, setAuditorName] = useState(existingReport?.auditorName ?? '')
   const [reviewName, setReviewName] = useState(existingReport?.reviewName ?? '')
