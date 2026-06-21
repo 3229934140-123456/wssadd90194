@@ -1,5 +1,5 @@
 import Papa from 'papaparse'
-import type { TemperaturePoint, GpsPoint, FileType, LocationType } from '@/types'
+import type { TemperaturePoint, GpsPoint, StopPoint, TemperatureSegment, FileType, LocationType } from '@/types'
 
 export function identifyFileType(fileName: string): FileType | null {
   const ext = fileName.toLowerCase().split('.').pop()
@@ -106,4 +106,122 @@ export function extractWaybillNumber(fileName: string): string | null {
   const dateMatch = fileName.match(/\d{6,8}/)
   if (dateMatch) return 'YD-' + dateMatch[0]
   return null
+}
+
+export function generateSegmentsFromTempData(
+  waybillId: string,
+  tempData: TemperaturePoint[],
+  tempMin: number,
+  tempMax: number,
+  stops: StopPoint[] = []
+): TemperatureSegment[] {
+  if (tempData.length === 0) return []
+
+  const segments: TemperatureSegment[] = []
+  let segStart = 0
+  let wasOverTemp = tempData[0].temperature > tempMax || tempData[0].temperature < tempMin
+
+  for (let i = 1; i < tempData.length; i++) {
+    const isOverTemp = tempData[i].temperature > tempMax || tempData[i].temperature < tempMin
+    if (isOverTemp !== wasOverTemp || i === tempData.length - 1) {
+      const endIdx = i === tempData.length - 1 ? i : i - 1
+      const slice = tempData.slice(segStart, endIdx + 1)
+      const temps = slice.map((p) => p.temperature)
+      const segStartTs = new Date(slice[0].timestamp).getTime()
+      const segEndTs = new Date(slice[slice.length - 1].timestamp).getTime()
+      const segMidTs = (segStartTs + segEndTs) / 2
+
+      let location = '运输途中'
+      let locationType: LocationType = 'highway'
+
+      if (wasOverTemp && stops.length > 0) {
+        let bestStop: StopPoint | null = null
+        let bestDist = Infinity
+        for (const sp of stops) {
+          const spStart = new Date(sp.startTime).getTime()
+          const spEnd = new Date(sp.endTime).getTime()
+          const spMid = (spStart + spEnd) / 2
+          const dist = Math.abs(spMid - segMidTs)
+          const overlapStart = Math.max(segStartTs, spStart)
+          const overlapEnd = Math.min(segEndTs, spEnd)
+          const hasOverlap = overlapEnd > overlapStart
+          if (hasOverlap || dist < bestDist) {
+            if (hasOverlap || dist < (tempData.length > 100 ? 600000 : 1200000)) {
+              bestDist = hasOverlap ? -1 : dist
+              bestStop = sp
+            }
+          }
+        }
+        if (bestStop) {
+          location = bestStop.locationName
+          locationType = bestStop.locationType
+        }
+      } else if (!wasOverTemp && stops.length > 0) {
+        for (const sp of stops) {
+          const spStart = new Date(sp.startTime).getTime()
+          const spEnd = new Date(sp.endTime).getTime()
+          const overlapStart = Math.max(segStartTs, spStart)
+          const overlapEnd = Math.min(segEndTs, spEnd)
+          if (overlapEnd > overlapStart) {
+            location = sp.locationName
+            locationType = sp.locationType
+            break
+          }
+        }
+      }
+
+      segments.push({
+        id: `${waybillId}-seg-${segments.length}`,
+        waybillId,
+        startTime: slice[0].timestamp,
+        endTime: slice[slice.length - 1].timestamp,
+        minTemp: Math.min(...temps),
+        maxTemp: Math.max(...temps),
+        avgTemp: Math.round((temps.reduce((a, b) => a + b, 0) / temps.length) * 10) / 10,
+        location,
+        locationType,
+        verdict: wasOverTemp ? null : 'acceptable',
+        note: '',
+        isOverTemp: wasOverTemp,
+      })
+      segStart = i
+      wasOverTemp = isOverTemp
+    }
+  }
+  return segments
+}
+
+export function generateStopPointsFromGps(gpsPoints: GpsPoint[]): StopPoint[] {
+  const stops: StopPoint[] = []
+  let currentStop: GpsPoint[] = []
+  for (const p of gpsPoints) {
+    if (p.isStopped) {
+      currentStop.push(p)
+    } else if (currentStop.length > 0) {
+      if (currentStop.length >= 3) {
+        stops.push({
+          startTime: currentStop[0].timestamp,
+          endTime: currentStop[currentStop.length - 1].timestamp,
+          latitude: currentStop[0].latitude,
+          longitude: currentStop[0].longitude,
+          duration: currentStop.length,
+          locationName: currentStop[0].locationName || '未知地点',
+          locationType: currentStop[0].locationType || 'other',
+        })
+      }
+      currentStop = []
+    }
+  }
+  if (currentStop.length >= 3) {
+    stops.push({
+      startTime: currentStop[0].timestamp,
+      endTime: currentStop[currentStop.length - 1].timestamp,
+      latitude: currentStop[0].latitude,
+      longitude: currentStop[0].longitude,
+      duration: currentStop.length,
+      locationName: currentStop[0].locationName || '未知地点',
+      locationType: currentStop[0].locationType || 'other',
+    })
+  }
+  return stops
 }

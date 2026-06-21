@@ -423,6 +423,9 @@ export const useStore = create<ColdChainStore>()(
       partialize: (state) => ({
         waybills: state.waybills,
         files: state.files,
+        temperatureData: state.temperatureData,
+        gpsData: state.gpsData,
+        stopPoints: state.stopPoints,
         segments: state.segments,
         reports: state.reports,
       }),

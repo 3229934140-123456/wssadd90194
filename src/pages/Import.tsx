@@ -16,6 +16,8 @@ import {
   identifyFileType,
   parseTemperatureCsv,
   parseGpsCsv,
+  generateSegmentsFromTempData,
+  generateStopPointsFromGps,
   formatFileSize,
   formatDateTime,
   generateId,
@@ -75,6 +77,11 @@ export default function Import() {
     updateWaybillStatus,
     setTemperatureData,
     setGpsData,
+    setStopPoints,
+    setSegments,
+    stopPoints,
+    temperatureData,
+    gpsData,
   } = useStore()
 
   const [isDragOver, setIsDragOver] = useState(false)
@@ -85,7 +92,6 @@ export default function Import() {
 
   const processFiles = useCallback(
     async (fileList: FileList | File[]) => {
-      const newUploadingIds: string[] = []
       const filesToProcess = Array.from(fileList).filter((f) => {
         const ext = '.' + f.name.split('.').pop()?.toLowerCase()
         return ACCEPTED_EXTENSIONS.includes(ext)
@@ -93,11 +99,9 @@ export default function Import() {
 
       if (filesToProcess.length === 0) return
 
-      for (const file of filesToProcess) {
-        const tempId = generateId()
-        newUploadingIds.push(tempId)
-      }
-      setUploadingFiles((prev) => [...prev, ...newUploadingIds])
+      setUploadingFiles(filesToProcess.map(() => generateId()))
+
+      const affectedWaybillIds = new Set<string>()
 
       for (let i = 0; i < filesToProcess.length; i++) {
         const file = filesToProcess[i]
@@ -130,6 +134,8 @@ export default function Import() {
           addWaybill(newWaybill)
         }
 
+        affectedWaybillIds.add(waybillId)
+
         const uploadedFile: UploadedFile = {
           id: generateId(),
           waybillId,
@@ -159,6 +165,10 @@ export default function Import() {
             const data = parseGpsCsv(text)
             if (data.length > 0) {
               setGpsData(waybillId, data)
+              const stops = generateStopPointsFromGps(data)
+              if (stops.length > 0) {
+                setStopPoints(waybillId, stops)
+              }
             }
           } catch {
             /* parse error, skip */
@@ -166,9 +176,25 @@ export default function Import() {
         }
       }
 
+      for (const wid of affectedWaybillIds) {
+        const wb = useStore.getState().waybills.find((w) => w.id === wid)
+        const td = useStore.getState().temperatureData[wid]
+        const sp = useStore.getState().stopPoints[wid]
+        if (wb && td && td.length > 0) {
+          const segs = generateSegmentsFromTempData(
+            wid,
+            td,
+            wb.temperatureRangeMin,
+            wb.temperatureRangeMax,
+            sp || []
+          )
+          setSegments(wid, segs)
+        }
+      }
+
       setUploadingFiles([])
     },
-    [waybills, addFile, addWaybill, setTemperatureData, setGpsData]
+    [waybills, addFile, addWaybill, setTemperatureData, setGpsData, setStopPoints, setSegments]
   )
 
   const handleDragOver = useCallback((e: React.DragEvent) => {

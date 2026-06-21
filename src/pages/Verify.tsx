@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useStore } from '@/store'
-import { formatTime, formatDateTime } from '@/utils/parsers'
+import { formatTime, formatDateTime, generateSegmentsFromTempData } from '@/utils/parsers'
 import type { TemperaturePoint, StopPoint, TemperatureSegment, Verdict } from '@/types'
 import { LOCATION_TYPE_LABELS, VERDICT_LABELS } from '@/types'
+import type { LocationType } from '@/types'
 import {
   Thermometer,
   Truck,
@@ -69,6 +70,7 @@ function TemperatureCurveCanvas({
     x: number
     y: number
     name: string
+    locationType: LocationType
   } | null>(null)
   const isDragging = useRef(false)
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 })
@@ -257,29 +259,43 @@ function TemperatureCurveCanvas({
     }
     drawSegment(mappedPoints.length - 1)
 
+    const stopPointColor = (lt: LocationType): { fill: string; stroke: string; label: string } => {
+      switch (lt) {
+        case 'loading_area':
+          return { fill: 'rgba(168, 85, 247, 0.3)', stroke: '#a855f7', label: '装卸区' }
+        case 'service_area':
+          return { fill: 'rgba(251, 146, 60, 0.3)', stroke: '#fb923c', label: '服务区' }
+        case 'vaccination_point':
+          return { fill: 'rgba(52, 211, 153, 0.3)', stroke: '#34d399', label: '接种点' }
+        default:
+          return { fill: 'rgba(148, 163, 184, 0.3)', stroke: '#94a3b8', label: '其他' }
+      }
+    }
+
     stopPointsList.forEach((sp, idx) => {
       const midTs =
         (new Date(sp.startTime).getTime() + new Date(sp.endTime).getTime()) / 2
       const x = toX(midTs)
       const y = PADDING_TOP + drawH
+      const colors = stopPointColor(sp.locationType)
 
-      ctx.fillStyle = 'rgba(251, 146, 60, 0.3)'
+      ctx.fillStyle = colors.fill
       ctx.beginPath()
-      ctx.arc(x, y + 14, 6, 0, Math.PI * 2)
+      ctx.arc(x, y + 14, 7, 0, Math.PI * 2)
       ctx.fill()
 
-      ctx.strokeStyle = '#fb923c'
+      ctx.strokeStyle = colors.stroke
       ctx.lineWidth = 2
       ctx.beginPath()
-      ctx.arc(x, y + 14, 6, 0, Math.PI * 2)
+      ctx.arc(x, y + 14, 7, 0, Math.PI * 2)
       ctx.stroke()
 
       if (idx === hoverStopIdx.current) {
-        ctx.fillStyle = '#fb923c'
+        ctx.fillStyle = colors.stroke
         ctx.font = 'bold 11px DM Sans, system-ui, sans-serif'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'bottom'
-        ctx.fillText(sp.locationName, x, y - 2)
+        ctx.fillText(`${sp.locationName} (${LOCATION_TYPE_LABELS[sp.locationType]})`, x, y - 2)
       }
     })
 
@@ -378,6 +394,7 @@ function TemperatureCurveCanvas({
           x: coords.canvasX,
           y: size.height - PADDING_BOTTOM - 10,
           name: stopPointsList[found].locationName,
+          locationType: stopPointsList[found].locationType,
         })
       } else {
         hoverStopIdx.current = null
@@ -477,11 +494,11 @@ function TemperatureCurveCanvas({
             className="absolute pointer-events-none px-2 py-1 rounded bg-slate-800/90 border border-frost-700/30 text-xs text-frost-200 whitespace-nowrap z-10"
             style={{ left: tooltip.x, top: tooltip.y - 28, transform: 'translateX(-50%)' }}
           >
-            {tooltip.name}
+            {tooltip.name} ({LOCATION_TYPE_LABELS[tooltip.locationType]})
           </div>
         )}
       </div>
-      <div className="flex items-center gap-5 px-4 py-2 border-t border-frost-900/30 text-xs text-slate-500">
+      <div className="flex items-center gap-5 px-4 py-2 border-t border-frost-900/30 text-xs text-slate-500 flex-wrap">
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-0.5 bg-frost-500 rounded" />
           正常温度
@@ -491,8 +508,16 @@ function TemperatureCurveCanvas({
           超温
         </span>
         <span className="flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-full border-2 border-purple-400 bg-purple-400/30" />
+          装卸区
+        </span>
+        <span className="flex items-center gap-1.5">
           <span className="inline-block w-2 h-2 rounded-full border-2 border-orange-400 bg-orange-400/30" />
-          停靠点
+          服务区
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-full border-2 border-emerald-400 bg-emerald-400/30" />
+          接种点
         </span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-0 border-t-2 border-dashed border-red-500/70" />
@@ -589,6 +614,7 @@ export default function Verify() {
   const getWaybillSegments = useStore((s) => s.getWaybillSegments)
   const updateSegmentVerdict = useStore((s) => s.updateSegmentVerdict)
   const updateWaybillStatus = useStore((s) => s.updateWaybillStatus)
+  const setSegments = useStore((s) => s.setSegments)
 
   const [jumpRange, setJumpRange] = useState<{
     startTime: string
@@ -601,6 +627,21 @@ export default function Verify() {
   const tempData = waybillId ? temperatureData[waybillId] || [] : []
   const stopPointsList = waybillId ? stopPoints[waybillId] || [] : []
   const allSegments = waybillId ? getWaybillSegments(waybillId) : []
+
+  useEffect(() => {
+    if (!waybillId || !waybill || tempData.length === 0) return
+    if (allSegments.length > 0) return
+    const segs = generateSegmentsFromTempData(
+      waybillId,
+      tempData,
+      waybill.temperatureRangeMin,
+      waybill.temperatureRangeMax,
+      stopPointsList
+    )
+    if (segs.length > 0) {
+      setSegments(waybillId, segs)
+    }
+  }, [waybillId, waybill, tempData, stopPointsList, allSegments.length, setSegments])
   const overTempSegments = allSegments.filter((s) => s.isOverTemp)
   const evaluatedCount = overTempSegments.filter((s) => s.verdict !== null).length
   const allEvaluated = overTempSegments.length > 0 && evaluatedCount === overTempSegments.length

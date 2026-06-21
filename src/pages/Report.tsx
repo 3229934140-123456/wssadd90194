@@ -96,7 +96,7 @@ export default function Report() {
     RELEASE_OPTIONS.find((o) => o.value === releaseRecommendation)?.label ?? ''
 
   return (
-    <div className="min-h-screen bg-slate-950 p-4 md:p-6 lg:p-8">
+    <div className="h-full flex flex-col overflow-y-auto p-6">
       <div className="mx-auto max-w-5xl space-y-6">
         {/* Waybill Info Header */}
         <div className="rounded-xl border border-slate-700/50 bg-slate-900/60 p-5 backdrop-blur-sm">
@@ -307,18 +307,16 @@ export default function Report() {
             <div className="mt-6">
               <h2 className="mb-2 text-base font-semibold">异常说明</h2>
               <p className="whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-3 text-sm">
-                {anomalyDescription}
+                {anomalyDescription || '无'}
               </p>
             </div>
 
-            {templateType !== 'simplified' && responsibleReply && (
-              <div className="mt-4">
-                <h2 className="mb-2 text-base font-semibold">责任方回复</h2>
-                <p className="whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-3 text-sm">
-                  {responsibleReply}
-                </p>
-              </div>
-            )}
+            <div className="mt-4">
+              <h2 className="mb-2 text-base font-semibold">责任方回复</h2>
+              <p className="whitespace-pre-wrap rounded border border-slate-200 bg-slate-50 p-3 text-sm">
+                {responsibleReply || '待填写'}
+              </p>
+            </div>
 
             <div className="mt-6">
               <h2 className="mb-2 text-base font-semibold">温度段判定</h2>
@@ -380,14 +378,12 @@ export default function Report() {
               </table>
             </div>
 
-            {templateType === 'compliance' && releaseRecommendation && (
-              <div className="mt-6">
-                <h2 className="mb-2 text-base font-semibold">放行建议</h2>
-                <p className="rounded border border-slate-200 bg-slate-50 p-3 text-sm font-medium">
-                  {releaseLabel}
-                </p>
-              </div>
-            )}
+            <div className="mt-6">
+              <h2 className="mb-2 text-base font-semibold">放行建议</h2>
+              <p className="rounded border border-slate-200 bg-slate-50 p-3 text-sm font-medium">
+                {releaseLabel || '待确定'}
+              </p>
+            </div>
 
             <div className="mt-8 grid grid-cols-2 gap-8">
               <div>
